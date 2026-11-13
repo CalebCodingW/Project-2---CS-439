@@ -1,0 +1,155 @@
+
+// How it plays:
+//   1. Yellow LED blinks while waiting. Hold your hand close to the sensor to start.
+//   2. Move your hand away (past 20 cm). Red, then yellow, then green light up one at a time.
+//   3. After a random delay, ALL lights go out. That's the GO signal.
+//   4. Move your hand toward the sensor (under 10 cm) as fast as you can.
+//
+//   Green flashes  = success 
+//   Red flashes    = false start 
+//   Yellow flashes = timeout 
+
+const int redLED = 2;
+const int yellowLED = 3;
+const int greenLED = 4;
+const int trigPin = 9;
+const int echoPin = 10;
+
+const int NEAR_CM = 10;                  // closer than this = hand detected
+const int FAR_CM = 20;                   // farther than this = hand is away
+const unsigned long TIMEOUT_MS = 2000;   // time allowed to react after GO
+
+unsigned long bestTime = 99999;        
+unsigned long totalTime = 0;        
+int rounds = 0;                         
+
+void setup() {
+  pinMode(redLED, OUTPUT);
+  pinMode(yellowLED, OUTPUT);
+  pinMode(greenLED, OUTPUT);
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+  Serial.begin(9600);
+  randomSeed(analogRead(A0));            // unconnected pin gives a random seed
+}
+
+// Returns the distance to the nearest object
+int getDistance() {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+
+  long duration = pulseIn(echoPin, HIGH, 12000);   
+  int cm = (int)(duration * 0.034 / 2);
+  if (duration == 0 || cm < 2) {
+    return 999;                  
+  }
+  return cm;
+}
+
+void allLEDs(bool on) {
+  int level = on ? HIGH : LOW;
+  digitalWrite(redLED, level);
+  digitalWrite(yellowLED, level);
+  digitalWrite(greenLED, level);
+}
+
+void waitForHandAway() {
+  while (getDistance() < FAR_CM) {
+    delay(30);
+  }
+}
+
+bool handNearDuring(unsigned long ms) {
+  unsigned long start = millis();
+  while (millis() - start < ms) {
+    if (getDistance() < NEAR_CM) return true;
+    delay(20);
+  }
+  return false;
+}
+
+void flash(int pin, int times, int ms) {
+  for (int i = 0; i < times; i++) {
+    digitalWrite(pin, HIGH);
+    delay(ms);
+    digitalWrite(pin, LOW);
+    delay(ms);
+  }
+}
+
+void falseStart() {
+  allLEDs(false);
+  Serial.println("FALSE START! Your hand came close too early.");
+  flash(redLED, 6, 100);
+  waitForHandAway();
+}
+
+void timeoutResult() {
+  Serial.println("TIMEOUT! Too slow.");
+  flash(yellowLED, 4, 250);
+}
+
+void loop() {
+  allLEDs(false);
+  Serial.println("Hold your hand CLOSE to the sensor to start.");
+
+  // Idle: yellow blinks until a hand is held close
+  while (getDistance() >= NEAR_CM) {
+    if ((millis() / 500) % 2 == 0) {
+      digitalWrite(yellowLED, HIGH);
+    } else {
+      digitalWrite(yellowLED, LOW);
+    }
+    delay(50);
+  }
+  allLEDs(false);
+  Serial.println("Move your hand away...");
+  waitForHandAway();
+  delay(500);
+
+  // Build the tension: red, then yellow, then green
+  digitalWrite(redLED, HIGH);
+  if (handNearDuring(1000)) { falseStart(); return; }
+
+  digitalWrite(yellowLED, HIGH);
+  if (handNearDuring(1000)) { falseStart(); return; }
+
+  digitalWrite(greenLED, HIGH);
+  if (handNearDuring(random(1000, 4001))) { falseStart(); return; }
+
+  // GO! All lights go out and the clock starts
+  allLEDs(false);
+  unsigned long goTime = millis();
+
+  while (getDistance() >= NEAR_CM) {
+    if (millis() - goTime > TIMEOUT_MS) {
+      timeoutResult();
+      return;
+    }
+    delay(10);
+  }
+  unsigned long reaction = millis() - goTime;
+
+  // Score keeping
+  rounds++;
+  totalTime += reaction;
+  Serial.print("Reaction time: ");
+  Serial.print(reaction);
+  Serial.println(" ms");
+  if (reaction < bestTime) {
+    bestTime = reaction;
+    Serial.println("New best time!");
+  }
+  Serial.print("Best: ");
+  Serial.print(bestTime);
+  Serial.print(" ms   Average: ");
+  Serial.print(totalTime / rounds);
+  Serial.println(" ms");
+
+  flash(greenLED, 3, 200);
+  waitForHandAway();
+  delay(1000);
+}
